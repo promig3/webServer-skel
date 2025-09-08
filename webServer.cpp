@@ -94,6 +94,42 @@ int processConnection(int sockFd) {
   // - If the header was valid and the method was HEAD, call a function to send back the header.
   // - If the header was valid and the method was POST, call a function to save the file to dis.
 
+  std::string container;
+  int bytesRead;
+  int bytesWritten;
+  char buffer[BUFFER_SIZE];
+
+  while (strcmp(container.c_str(), TERM_STRING) != 0) {
+    container = "";
+
+    while (true) { // loop until entire message is read
+      bzero(buffer,BUFFER_SIZE); // initialize blank buffer
+
+      /* Read data sent from client */
+      if ((bytesRead = read(sockFd, buffer, BUFFER_SIZE)) < 1) {
+        if (bytesRead < 0) {
+          std::cout << "read() failed: " << strerror(errno) << std::endl;
+          exit(-1);
+        }
+        std::cout << "connection closed unexpectedly" << std::endl;
+        break;
+      }
+      std::cout << "We read " << bytesRead << "bytes" << std::endl;
+      container.append(buffer); // append to container
+      if (container.find("\r\n") != std::string::npos) { // check for line terminator
+        break;
+      }
+    }
+
+    /* send container back to client */
+    if ((bytesWritten = write(sockFd, container.c_str(), container.length())) < 0) {
+      std::cout << "write() failed: " << strerror(errno) << std::endl;
+      exit(-1);
+    }
+  }
+
+
+
   return 0;
 }
     
@@ -130,7 +166,11 @@ int main (int argc, char *argv[]) {
   // *******************************************************************
   // * Creating the inital socket using the socket() call.
   // ********************************************************************
-  int listenFd;
+  int listenFd = -1;
+  if ((listenFd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    std::cout << "Failed to create listening socket " << strerror(errno) << std::endl;
+    exit(-1);
+  }
   DEBUG << "Calling Socket() assigned file descriptor " << listenFd << ENDL;
 
   
@@ -144,6 +184,30 @@ int main (int argc, char *argv[]) {
   // If you want to listen for connections on any IP address you use the
   // address INADDR_ANY
   // ********************************************************************
+  struct sockaddr_in {
+    sa_family_t sin_family; /* Address family */
+    in_port_t sin_port; /* Port number. */
+    struct in_addr sin_addr; /* Internet address. */
+
+    /* Pad to size of `struct sockaddr'. */
+    unsigned char sin_zero[8];
+  };
+
+  // Define the structure
+  struct sockaddr_in servaddr;
+
+  // Zero the whole thing.
+  bzero(&servaddr, sizeof(servaddr));
+
+  // IPv4 Protocol Family
+  servaddr.sin_family = AF_INET;
+
+  // Let the system pick the IP address.
+  servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+  // You pick a random high-numbered port
+  servaddr.sin_port = htons(PORT);
+
 
 
 
@@ -155,9 +219,24 @@ int main (int argc, char *argv[]) {
   // * Don't forget to check to see if bind() fails because the port
   // * you picked is in use, and if the port is in use, pick a different one.
   // ********************************************************************
-  uint16_t port;
+  uint16_t port; // set port to default value
   DEBUG << "Calling bind()" << ENDL;
-  
+
+  bool bound = false; // boolean is false until bind() call is successful
+  while (!bound) {
+      if (bind(listenFd, (sockaddr *) &servaddr, sizeof(servaddr)) < 0) {
+        if (errno == EADDRINUSE) { // error due to busy port number
+          servaddr.sin_port = htons(ntohs(servaddr.sin_port) + 1); // try next port number
+        } else { // any other error
+        std::cout << "bind() failed: " << strerror(errno) << std::endl;
+        exit(-1);
+        }
+    } else {
+      bound = true; // bind() call was successful
+    }
+  }
+
+  port = ntohs(servaddr.sin_port);
   std::cout << "Using port: " << port << std::endl;
 
 
@@ -168,6 +247,12 @@ int main (int argc, char *argv[]) {
   // ********************************************************************
   DEBUG << "Calling listen()" << ENDL;
 
+  int listenq = 1;
+  if (listen(listenFd, listenq) < 0) {
+    std::cout << "listen() failed: " << strerror(errno) << std::endl;
+    exit(-1);
+  }
+
 
   // ********************************************************************
   // * The accept call will sleep, waiting for a connection.  When 
@@ -176,10 +261,13 @@ int main (int argc, char *argv[]) {
   // ********************************************************************
   int quitProgram = 0;
   while (!quitProgram) {
-    int connFd = 0;
+    int connFd = -1;
     DEBUG << "Calling connFd = accept(fd,NULL,NULL)." << ENDL;
 
-    
+    if ((connFd = accept(listenFd, (sockaddr *) NULL, NULL)) < 0) {
+      std::cout << "accept() failed: " << strerror(errno) << std::endl;
+      exit(-1);
+    }
 
     DEBUG << "We have recieved a connection on " << connFd << ". Calling processConnection(" << connFd << ")" << ENDL;
     quitProgram = processConnection(connFd);

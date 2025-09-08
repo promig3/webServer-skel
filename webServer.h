@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
@@ -20,6 +21,9 @@
 #define HEAD 2
 #define POST 3
 
+#define PORT 1701
+
 inline int BUFFER_SIZE = 10;
+const char* TERM_STRING = "CLOSE\r\n";
 
 #endif
