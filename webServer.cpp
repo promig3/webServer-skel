@@ -100,7 +100,14 @@ int readRequest(int sockFd,std::string &filename) {
 // * Send one line (including the line terminator <LF><CR>)
 // * - Assumes the terminator is not included, so it is appended.
 // **************************************************************************
-void sendLine(int socketFd, std::string &stringToSend) {
+void sendLine(int socketFd, const std::string &stringToSend) {
+  /* send container back to client */
+  std::string buffer = stringToSend + "\r\n"; // make new string with crlf
+  int bytesWritten;
+  if ((bytesWritten = write(socketFd, buffer.c_str(), buffer.length())) < 0) {
+    std::cout << "write() failed: " << strerror(errno) << std::endl;
+    exit(-1);
+  }
   return;
 }
 
@@ -108,6 +115,12 @@ void sendLine(int socketFd, std::string &stringToSend) {
 // * Send the entire 404 response, header and body.
 // **************************************************************************
 void send404(int sockFd) {
+  sendLine(sockFd, "HTTP/1.1 404 Not Found");
+  sendLine(sockFd, "content-type: text/html");
+  sendLine(sockFd, "content-length: 118");
+  sendLine(sockFd, ""); // end message header
+  sendLine(sockFd, "File not found. Please request a file of the following format: fileX.html or imageX.jpg where X is a single digit 0-9."); // friendly message
+  sendLine(sockFd, ""); // end message body
   return;
 }
 
@@ -115,6 +128,12 @@ void send404(int sockFd) {
 // * Send the entire 400 response, header and body.
 // **************************************************************************
 void send400(int sockFd) {
+  sendLine(sockFd, "HTTP/1.1 400 Bad Request");
+  sendLine(sockFd, "content-type: text/html");
+  sendLine(sockFd, "content-length: 67");
+  sendLine(sockFd, ""); // end message header
+  sendLine(sockFd, "Bad request. Please send a GET request using the standard HTTP/1.1."); // friendly message
+  sendLine(sockFd, ""); // end message body
   return;
 }
 
@@ -185,11 +204,19 @@ int processConnection(int sockFd) {
 
   std::string filename;
 
-  int returnCode = readRequest(sockFd, filename);
+  int returnCode = readRequest(sockFd, filename); // read request
   std::cout << "Return Code: " << returnCode << " Filename: " << filename << std::endl;
 
-
-
+  if (returnCode == 400) {
+    send400(sockFd);
+  } else if (returnCode == 404) {
+    send404(sockFd);
+  } else if (returnCode == 200) {
+    sendFile(sockFd, filename);
+  } else {
+    std::cout << "Unexpected return code: " << returnCode << std::endl;
+    exit(-1);
+  }
 
   return 0;
 }
