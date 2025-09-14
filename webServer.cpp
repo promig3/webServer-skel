@@ -38,8 +38,61 @@
 //   - Return HTTP code to be sent back
 //   - Set filename if appropriate. Filename syntax is valided but existance is not verified.
 // **************************************************************************************
-int readHeader(int sockFd,std::string &filename) {
-  return 0;
+int readRequest(int sockFd,std::string &filename) {
+  int returnCode = 400; // default return code
+
+  std::string container; // container to hold line
+  int bytesRead; // keep track of number of bytes read
+  char buffer[BUFFER_SIZE]; // buffer to store bytes read
+  container = ""; // intialize container to empty string
+
+  while (true) { // loop until entire line is read
+    bzero(buffer,BUFFER_SIZE); // initialize blank buffer
+
+    /* Read data sent from client */
+    if ((bytesRead = read(sockFd, buffer, BUFFER_SIZE)) < 1) {
+      if (bytesRead < 0) { // if bytesRead < 0, errno will have more information about error
+        std::cout << "read() failed: " << strerror(errno) << std::endl;
+        exit(-1);
+      }
+      // if bytesRead = 0, then connection closed.
+      std::cout << "connection closed unexpectedly" << std::endl;
+      break;
+    }
+    std::cout << "We read " << bytesRead << "bytes" << std::endl;
+    container.append(buffer, bytesRead); // append to container
+    if (container.find("\r\n") != std::string::npos) { // check for line terminator
+      break;
+    }
+  }
+
+  // check if container holds a GET request
+  std::smatch get_matches;
+  if (std::regex_search(container, get_matches, GET_REGEX)) {
+    // print useful information
+    if (get_matches.size() == 4) { // 0-th element is the full match, then 4 capture groups
+      std::cout << "Full Match: " << get_matches[0].str() << std::endl;
+      std::cout << "Method: " << get_matches[1].str() << std::endl;
+      std::cout << "Path: " << get_matches[2].str() << std::endl;
+      std::cout << "HTTP Version: " << get_matches[3].str() << std::endl;
+    }
+    filename = get_matches[2].str();
+
+    // check if file format is valid
+    std::smatch file_matches;
+    if (std::regex_search(filename, file_matches, FILE_REGEX)) { // if valid file format
+      std::cout << "200: HTTP Request OK." << std::endl;
+      returnCode = 200;
+    } else { // if invalid file format
+      std::cout << "404: File Not Found." << std::endl;
+      returnCode = 404;
+    }
+  } else { // if format didn't match GET request
+    std::cout << "400: Bad Request." << std::endl;
+    returnCode = 400;
+  }
+  
+  return returnCode;
 }
 
 
@@ -70,7 +123,7 @@ void send400(int sockFd) {
 // * sendFile
 // * -- Send a file back to the browser.
 // **************************************************************************************
-void sesendFile(int sockFd,std::string filename) {
+void sendFile(int sockFd,std::string filename) {
   return;
 }
 
@@ -94,39 +147,47 @@ int processConnection(int sockFd) {
   // - If the header was valid and the method was HEAD, call a function to send back the header.
   // - If the header was valid and the method was POST, call a function to save the file to dis.
 
-  std::string container;
-  int bytesRead;
-  int bytesWritten;
-  char buffer[BUFFER_SIZE];
+  // std::string container;
+  // int bytesRead;
+  // int bytesWritten;
+  // char buffer[BUFFER_SIZE];
 
-  while (strcmp(container.c_str(), TERM_STRING) != 0) {
-    container = "";
+  // while (strcmp(container.c_str(), TERM_STRING) != 0) {
+  //   container = "";
 
-    while (true) { // loop until entire message is read
-      bzero(buffer,BUFFER_SIZE); // initialize blank buffer
+  //   while (true) { // loop until entire message is read
+  //     bzero(buffer,BUFFER_SIZE); // initialize blank buffer
 
-      /* Read data sent from client */
-      if ((bytesRead = read(sockFd, buffer, BUFFER_SIZE)) < 1) {
-        if (bytesRead < 0) {
-          std::cout << "read() failed: " << strerror(errno) << std::endl;
-          exit(-1);
-        }
-        std::cout << "connection closed unexpectedly" << std::endl;
-        break;
-      }
-      std::cout << "We read " << bytesRead << "bytes" << std::endl;
-      container.append(buffer); // append to container
-      if (container.find("\r\n") != std::string::npos) { // check for line terminator
-        break;
-      }
-    }
+  //     /* Read data sent from client */
+  //     if ((bytesRead = read(sockFd, buffer, BUFFER_SIZE)) < 1) {
+  //       if (bytesRead < 0) {
+  //         std::cout << "read() failed: " << strerror(errno) << std::endl;
+  //         exit(-1);
+  //       }
+  //       std::cout << "connection closed unexpectedly" << std::endl;
+  //       break;
+  //     }
+  //     std::cout << "We read " << bytesRead << "bytes" << std::endl;
+  //     container.append(buffer, bytesRead); // append to container
+  //     std::cout << container << std::endl; // DEBUGGING LINE
+  //     std::cout << buffer << std::endl; //DEBUGGING
+  //     if (container.find("\r\n") != std::string::npos) { // check for line terminator
+  //       break;
+  //     }
+  //   }
 
-    /* send container back to client */
-    if ((bytesWritten = write(sockFd, container.c_str(), container.length())) < 0) {
-      std::cout << "write() failed: " << strerror(errno) << std::endl;
-      exit(-1);
-    }
-  }
+  //   /* send container back to client */
+  //   if ((bytesWritten = write(sockFd, container.c_str(), container.length())) < 0) {
+  //     std::cout << "write() failed: " << strerror(errno) << std::endl;
+  //     exit(-1);
+  //   }
+  // }
+
+  std::string filename;
+
+  int returnCode = readRequest(sockFd, filename);
+  std::cout << "Return Code: " << returnCode << " Filename: " << filename << std::endl;
+
 
 
 
