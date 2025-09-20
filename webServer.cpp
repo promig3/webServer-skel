@@ -52,16 +52,16 @@ int readRequest(int sockFd,std::string &filename) {
     /* Read data sent from client */
     if ((bytesRead = read(sockFd, buffer, BUFFER_SIZE)) < 1) {
       if (bytesRead < 0) { // if bytesRead < 0, errno will have more information about error
-        std::cout << "read() failed: " << strerror(errno) << std::endl;
+        DEBUG << "read() failed: " << strerror(errno) << ENDL;
         exit(-1);
       }
       // if bytesRead = 0, then connection closed.
-      std::cout << "connection closed unexpectedly" << std::endl;
+      DEBUG << "connection closed unexpectedly" << ENDL;
       break;
     }
-    std::cout << "We read " << bytesRead << "bytes" << std::endl;
+    DEBUG << "We read " << bytesRead << "bytes" << ENDL;
     container.append(buffer, bytesRead); // append to container
-    if (container.find("\r\n") != std::string::npos) { // check for line terminator
+    if (container.find("\r\n\r\n") != std::string::npos) { // check for end of header
       break;
     }
   }
@@ -71,24 +71,24 @@ int readRequest(int sockFd,std::string &filename) {
   if (std::regex_search(container, get_matches, GET_REGEX)) {
     // print useful information
     if (get_matches.size() == 4) { // 0-th element is the full match, then 4 capture groups
-      std::cout << "Full Match: " << get_matches[0].str() << std::endl;
-      std::cout << "Method: " << get_matches[1].str() << std::endl;
-      std::cout << "Path: " << get_matches[2].str() << std::endl;
-      std::cout << "HTTP Version: " << get_matches[3].str() << std::endl;
+      DEBUG << "Full Match: " << get_matches[0].str() << ENDL;
+      DEBUG << "Method: " << get_matches[1].str() << ENDL;
+      DEBUG << "Path: " << get_matches[2].str() << ENDL;
+      DEBUG << "HTTP Version: " << get_matches[3].str() << ENDL;
     }
-    filename = get_matches[2].str();
+    filename = get_matches[2].str().c_str() + 1;
 
     // check if file format is valid
     std::smatch file_matches;
-    if (std::regex_search(filename, file_matches, FILE_REGEX)) { // if valid file format
-      std::cout << "200: HTTP Request OK." << std::endl;
+    if (std::regex_search(filename, file_matches, HTML_REGEX) || std::regex_search(filename, file_matches, JPG_REGEX)) { // if valid file format
+      DEBUG << "200: HTTP Request OK." << ENDL;
       returnCode = 200;
     } else { // if invalid file format
-      std::cout << "404: File Not Found." << std::endl;
+      DEBUG << "404: File Not Found." << ENDL;
       returnCode = 404;
     }
   } else { // if format didn't match GET request
-    std::cout << "400: Bad Request." << std::endl;
+    DEBUG << "400: Bad Request." << ENDL;
     returnCode = 400;
   }
   
@@ -105,7 +105,7 @@ void sendLine(int socketFd, const std::string &stringToSend) {
   std::string buffer = stringToSend + "\r\n"; // make new string with crlf
   int bytesWritten;
   if ((bytesWritten = write(socketFd, buffer.c_str(), buffer.length())) < 0) {
-    std::cout << "write() failed: " << strerror(errno) << std::endl;
+    DEBUG << "write() failed: " << strerror(errno) << ENDL;
     exit(-1);
   }
   return;
@@ -117,9 +117,9 @@ void sendLine(int socketFd, const std::string &stringToSend) {
 void send404(int sockFd) {
   sendLine(sockFd, "HTTP/1.1 404 Not Found");
   sendLine(sockFd, "content-type: text/html");
-  sendLine(sockFd, "content-length: 118");
+  sendLine(sockFd, "content-length: 126");
   sendLine(sockFd, ""); // end message header
-  sendLine(sockFd, "File not found. Please request a file of the following format: fileX.html or imageX.jpg where X is a single digit 0-9."); // friendly message
+  sendLine(sockFd, "404 File not found. Please request a file of the following format: fileX.html or imageX.jpg where X is a single digit 0-9."); // friendly message
   sendLine(sockFd, ""); // end message body
   return;
 }
@@ -130,9 +130,9 @@ void send404(int sockFd) {
 void send400(int sockFd) {
   sendLine(sockFd, "HTTP/1.1 400 Bad Request");
   sendLine(sockFd, "content-type: text/html");
-  sendLine(sockFd, "content-length: 67");
+  sendLine(sockFd, "content-length: 75");
   sendLine(sockFd, ""); // end message header
-  sendLine(sockFd, "Bad request. Please send a GET request using the standard HTTP/1.1."); // friendly message
+  sendLine(sockFd, "400 Bad request. Please send a GET request using the standard HTTP/1.1."); // friendly message
   sendLine(sockFd, ""); // end message body
   return;
 }
@@ -143,6 +143,54 @@ void send400(int sockFd) {
 // * -- Send a file back to the browser.
 // **************************************************************************************
 void sendFile(int sockFd,std::string filename) {
+  struct stat file_info; // hold file information
+  int size; // hold file size
+  if (stat(filename.c_str(), &file_info) == 0) {
+    size = (long long)file_info.st_size;
+  } else { // stat call failed, send 404
+    DEBUG << "stat() failed: " << strerror(errno) << ENDL;
+    send404(sockFd);
+    return;
+  }
+  // send header
+  sendLine(sockFd, "HTTP/1.1 200 OK");
+  // check file type
+  std::smatch file_matches;
+  if (std::regex_search(filename, file_matches, HTML_REGEX)) { // if html file format
+    sendLine(sockFd, "content-type: text/html");
+  } else if (std::regex_search(filename, file_matches, JPG_REGEX)) { // if jpg file format
+    sendLine(sockFd, "content-type: image/jpeg");
+  }
+  sendLine(sockFd, "content-length: " + std::to_string(size));
+  sendLine(sockFd, ""); // end message header
+
+  // open file
+  int fd = open(filename.c_str(), O_RDONLY);
+  if (fd < 0) { // open call failed
+    DEBUG << "Error opening file!" << ENDL;
+    send404(sockFd);
+    return;
+  }
+
+  char buffer[BUFFER_SIZE]; // create buffer
+  ssize_t bytesRead;
+
+  while ((bytesRead = read(fd, buffer, BUFFER_SIZE)) > 0) { // loop until entire file is read
+    ssize_t bytesWritten = 0;
+    while (bytesWritten < bytesRead) { // loop until entire file is written
+      ssize_t result = write(sockFd, buffer + bytesWritten, bytesRead - bytesWritten);
+      if (result < 0) { // check for write error
+        DEBUG << "write() to socket failed: " << strerror(errno) << ENDL;
+        close(fd);
+        return;
+      }
+      bytesWritten += result; // add to bytesWritten count
+    }
+  }
+  if (bytesRead < 0) { // read error
+    DEBUG << "read() from file failed: " << strerror(errno) << ENDL;
+  }
+  close(fd);
   return;
 }
 
@@ -152,60 +200,11 @@ void sendFile(int sockFd,std::string filename) {
 // * -- process one connection/request.
 // **************************************************************************************
 int processConnection(int sockFd) {
- 
-  // Call readHeader()
-
-  // If read header returned 400, send 400
-
-  // If read header returned 404, call send404
-
-  // 471: If read header returned 200, call sendFile
-  
-  // 598 students
-  // - If the header was valid and the method was GET, call sendFile()
-  // - If the header was valid and the method was HEAD, call a function to send back the header.
-  // - If the header was valid and the method was POST, call a function to save the file to dis.
-
-  // std::string container;
-  // int bytesRead;
-  // int bytesWritten;
-  // char buffer[BUFFER_SIZE];
-
-  // while (strcmp(container.c_str(), TERM_STRING) != 0) {
-  //   container = "";
-
-  //   while (true) { // loop until entire message is read
-  //     bzero(buffer,BUFFER_SIZE); // initialize blank buffer
-
-  //     /* Read data sent from client */
-  //     if ((bytesRead = read(sockFd, buffer, BUFFER_SIZE)) < 1) {
-  //       if (bytesRead < 0) {
-  //         std::cout << "read() failed: " << strerror(errno) << std::endl;
-  //         exit(-1);
-  //       }
-  //       std::cout << "connection closed unexpectedly" << std::endl;
-  //       break;
-  //     }
-  //     std::cout << "We read " << bytesRead << "bytes" << std::endl;
-  //     container.append(buffer, bytesRead); // append to container
-  //     std::cout << container << std::endl; // DEBUGGING LINE
-  //     std::cout << buffer << std::endl; //DEBUGGING
-  //     if (container.find("\r\n") != std::string::npos) { // check for line terminator
-  //       break;
-  //     }
-  //   }
-
-  //   /* send container back to client */
-  //   if ((bytesWritten = write(sockFd, container.c_str(), container.length())) < 0) {
-  //     std::cout << "write() failed: " << strerror(errno) << std::endl;
-  //     exit(-1);
-  //   }
-  // }
 
   std::string filename;
 
   int returnCode = readRequest(sockFd, filename); // read request
-  std::cout << "Return Code: " << returnCode << " Filename: " << filename << std::endl;
+  DEBUG << "Return Code: " << returnCode << " Filename: " << filename << ENDL;
 
   if (returnCode == 400) {
     send400(sockFd);
@@ -214,7 +213,7 @@ int processConnection(int sockFd) {
   } else if (returnCode == 200) {
     sendFile(sockFd, filename);
   } else {
-    std::cout << "Unexpected return code: " << returnCode << std::endl;
+    DEBUG << "Unexpected return code: " << returnCode << ENDL;
     exit(-1);
   }
 
@@ -223,7 +222,6 @@ int processConnection(int sockFd) {
     
 
 int main (int argc, char *argv[]) {
-
 
   // ********************************************************************
   // * Process the command line arguments
@@ -238,25 +236,22 @@ int main (int argc, char *argv[]) {
     case ':':
     case '?':
     default:
-      std::cout << "useage: " << argv[0] << " -d LOG_LEVEL" << std::endl;
+      DEBUG << "useage: " << argv[0] << " -d LOG_LEVEL" << ENDL;
       exit(-1);
     }
   }
-
 
   // *******************************************************************
   // * Catch all possible signals
   // ********************************************************************
   DEBUG << "Setting up signal handlers" << ENDL;
   
-
-  
   // *******************************************************************
   // * Creating the inital socket using the socket() call.
   // ********************************************************************
   int listenFd = -1;
   if ((listenFd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-    std::cout << "Failed to create listening socket " << strerror(errno) << std::endl;
+    DEBUG << "Failed to create listening socket " << strerror(errno) << ENDL;
     exit(-1);
   }
   DEBUG << "Calling Socket() assigned file descriptor " << listenFd << ENDL;
@@ -296,9 +291,6 @@ int main (int argc, char *argv[]) {
   // You pick a random high-numbered port
   servaddr.sin_port = htons(PORT);
 
-
-
-
   // ********************************************************************
   // * Binding configures the socket with the parameters we have
   // * specified in the servaddr structure.  This step is implicit in
@@ -316,7 +308,7 @@ int main (int argc, char *argv[]) {
         if (errno == EADDRINUSE) { // error due to busy port number
           servaddr.sin_port = htons(ntohs(servaddr.sin_port) + 1); // try next port number
         } else { // any other error
-        std::cout << "bind() failed: " << strerror(errno) << std::endl;
+        DEBUG << "bind() failed: " << strerror(errno) << ENDL;
         exit(-1);
         }
     } else {
@@ -325,7 +317,7 @@ int main (int argc, char *argv[]) {
   }
 
   port = ntohs(servaddr.sin_port);
-  std::cout << "Using port: " << port << std::endl;
+  DEBUG << "Using port: " << port << ENDL;
 
 
   // ********************************************************************
@@ -337,10 +329,15 @@ int main (int argc, char *argv[]) {
 
   int listenq = 1;
   if (listen(listenFd, listenq) < 0) {
-    std::cout << "listen() failed: " << strerror(errno) << std::endl;
+    DEBUG << "listen() failed: " << strerror(errno) << ENDL;
     exit(-1);
   }
 
+  // change to data directory
+  if (chdir("data") != 0) {
+    DEBUG << "Error changing directory." << ENDL;
+    exit(-1);
+  }
 
   // ********************************************************************
   // * The accept call will sleep, waiting for a connection.  When 
@@ -353,7 +350,7 @@ int main (int argc, char *argv[]) {
     DEBUG << "Calling connFd = accept(fd,NULL,NULL)." << ENDL;
 
     if ((connFd = accept(listenFd, (sockaddr *) NULL, NULL)) < 0) {
-      std::cout << "accept() failed: " << strerror(errno) << std::endl;
+      DEBUG << "accept() failed: " << strerror(errno) << ENDL;
       exit(-1);
     }
 
